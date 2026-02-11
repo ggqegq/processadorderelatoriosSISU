@@ -1,14 +1,8 @@
 # requirements.txt - Processador de Relatórios SISU - IQ/UFF
-# Versão compatível com Python 3.9 - 3.12 (não usar Python 3.13)
+# Versão compatível com Python 3.11
 
-# Core
-streamlit==1.29.0
-pandas==1.5.3  # Versão mais estável, sem necessidade de compilação
+streamlit==1.28.1
+pandas==2.0.3
 numpy==1.24.3
-
-# Manipulação de Excel
 openpyxl==3.1.2
 xlrd==2.0.1
-
-# Removido google-colab - não necessário para Streamlit
-# Removido XlsxWriter - openpyxl é suficiente
