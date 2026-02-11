@@ -1,0 +1,19 @@
+# requirements.txt
+# Dependências para o Processador de Relatórios SISU - IQ/UFF
+
+# Core
+streamlit==1.29.0
+pandas==2.0.3
+numpy==1.24.3
+
+# Manipulação de Excel
+openpyxl==3.1.2
+xlrd==2.0.1
+XlsxWriter==3.1.2
+
+# Para Google Colab (opcional, mas incluído para compatibilidade)
+google-colab==1.0.0
+
+# Utilitários
+python-dateutil==2.8.2
+pytz==2023.3
