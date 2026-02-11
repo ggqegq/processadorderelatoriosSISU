@@ -1,254 +1,164 @@
 """
 app.py - Processador de Relatórios SISU - IQ/UFF
-Versão simplificada e compatível com Python 3.11
+Versão ultra simplificada para Streamlit Cloud
 """
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 from io import BytesIO
 from datetime import datetime
 import re
 
-# Configuração da página - DEVE SER O PRIMEIRO COMANDO STREAMLIT
+# Configuração da página - PRIMEIRO COMANDO
 st.set_page_config(
     page_title="Processador SISU - IQ/UFF",
     page_icon="🧪",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# CSS customizado
+# CSS simples
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
-        padding: 1.5rem;
+    .stApp {
+        background-color: #f0f2f6;
+    }
+    .main-title {
+        background: linear-gradient(90deg, #1e3c72, #2a5298);
+        padding: 20px;
         border-radius: 10px;
         color: white;
-        margin-bottom: 2rem;
-    }
-    .stApp {
-        background-color: #f8f9fa;
-    }
-    .info-box {
-        background-color: #e7f3fe;
-        border-left: 6px solid #2196F3;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
+        margin-bottom: 20px;
     }
     .success-box {
         background-color: #d4edda;
-        border-left: 6px solid #28a745;
-        padding: 1rem;
+        border-left: 5px solid #28a745;
+        padding: 15px;
         border-radius: 5px;
-        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Dicionário de motivos de cancelamento
-MOTIVOS_CANCELAMENTO = {
-    'Solicitação Oficial': 'Solicitação Oficial',
-    'Abandono': 'Abandono',
-    'Insuficiência de Aproveitamento': 'Insuficiência de Aproveitamento',
-    'Ingressante - Insuf. Aproveit.': 'Ingressante - Insuf. Aproveit.',
-    'Mudança de Curso': 'Mudança de Curso'
-}
-
-def normalizar_situacao(situacao):
-    """Normaliza as legendas de situação do aluno"""
-    if pd.isna(situacao):
-        return 'Não informado'
+def processar_arquivo(df, periodo):
+    """Processa o arquivo e extrai as informações"""
     
-    situacao = str(situacao).lower().strip()
+    resultados = {
+        'total_alunos': 0,
+        'ativos': 0,
+        'cancelados': 0,
+        'trancados': 0,
+        'formados': 0,
+        'por_curso': {},
+        'cancelamentos_periodo': 0
+    }
     
-    if 'pendente' in situacao:
-        return 'Pendente'
-    elif 'inscrito' in situacao:
-        return 'Inscrito'
-    elif 'concluinte' in situacao:
-        return 'Concluinte'
-    elif 'trancado' in situacao:
-        return 'Trancado'
-    elif 'formado' in situacao:
-        return 'Formado'
-    elif 'cancelamento' in situacao:
-        return 'Cancelado'
-    else:
-        return situacao.capitalize()
-
-def classificar_modalidade(codigo):
-    """Classifica a modalidade de ingresso"""
-    if pd.isna(codigo):
-        return 'NÃO CLASSIFICADO'
-    
-    codigo = str(codigo).strip().upper()
-    
-    if codigo.startswith('A'):
-        return 'AMPLA CONCORRÊNCIA'
-    elif codigo.startswith('L'):
-        return 'AÇÕES AFIRMATIVAS'
-    else:
-        return 'OUTRAS MODALIDADES'
-
-def classificar_curso(titulacao):
-    """Classifica o curso baseado na titulação"""
-    if pd.isna(titulacao):
-        return 'Não identificado'
-    
-    titulacao = str(titulacao).lower()
-    
-    if 'licenciatura' in titulacao:
-        return 'Licenciatura Química'
-    elif 'bacharel' in titulacao:
-        if 'industrial' in titulacao:
-            return 'Bacharel Q Industrial'
-        else:
-            return 'Bacharel Química'
-    else:
-        return 'Outros'
-
-def classificar_motivo_cancelamento(situacao):
-    """Classifica o motivo do cancelamento"""
-    if pd.isna(situacao):
-        return 'Outros'
-    
-    situacao_lower = str(situacao).lower()
-    
-    for motivo in MOTIVOS_CANCELAMENTO.values():
-        if motivo.lower() in situacao_lower:
-            return motivo
-    
-    return 'Outros'
-
-def extrair_periodo(data_desvinculacao):
-    """Extrai período (ANO/SEMESTRE) da data de desvinculação"""
-    if pd.isna(data_desvinculacao):
-        return None
-    
-    data_str = str(data_desvinculacao)
-    match = re.search(r'(\d{4})\s*/\s*(\d+)[º°]?', data_str)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}"
-    return None
-
-def processar_relatorio(df, periodo):
-    """Processa o DataFrame do relatório"""
-    
-    # Identificar colunas
-    colunas = {}
-    for col in df.columns:
-        col_lower = str(col).lower()
-        if 'situação' in col_lower or 'situacao' in col_lower:
-            colunas['situacao'] = col
-        elif 'modalidade' in col_lower:
-            colunas['modalidade'] = col
-        elif 'desvinculado' in col_lower:
-            colunas['desvinculado'] = col
-        elif 'curso' in col_lower or 'titulação' in col_lower:
-            colunas['curso'] = col
-        elif 'matrícula' in col_lower or 'matricula' in col_lower:
-            colunas['matricula'] = col
-    
-    # Verificar colunas essenciais
-    if 'situacao' not in colunas or 'modalidade' not in colunas:
-        st.error("❌ Colunas obrigatórias não encontradas. Verifique o formato do arquivo.")
-        return None
-    
-    # Limpar dados
-    df = df.dropna(subset=[colunas['modalidade']], how='all')
-    df = df[~df[colunas['situacao']].astype(str).str.contains('Alunos de|Total|Resumo', na=False, case=False)]
-    
-    # Aplicar classificações
-    df['SITUACAO_NORMALIZADA'] = df[colunas['situacao']].apply(normalizar_situacao)
-    df['MODALIDADE_CLASSIFICADA'] = df[colunas['modalidade']].apply(classificar_modalidade)
-    df['CURSO_CLASSIFICADO'] = df[colunas['curso']].apply(classificar_curso) if 'curso' in colunas else 'Não identificado'
-    
-    # Data de desvinculação
-    if 'desvinculado' in colunas:
-        df['PERIODO_DESVINCULACAO'] = df[colunas['desvinculado']].apply(extrair_periodo)
-    else:
-        df['PERIODO_DESVINCULACAO'] = None
-    
-    # Classificações adicionais
-    df['E_CANCELADO'] = df[colunas['situacao']].astype(str).str.contains('Cancelamento', case=False, na=False)
-    df['MOTIVO_CANCELAMENTO'] = df[colunas['situacao']].apply(classificar_motivo_cancelamento)
-    df['E_TRANCADO'] = df[colunas['situacao']].astype(str).str.contains('Trancado', case=False, na=False)
-    df['E_FORMADO'] = df[colunas['situacao']].astype(str).str.contains('Formado', case=False, na=False)
-    
-    # Matrículas ativas
-    df['E_ATIVO'] = df['SITUACAO_NORMALIZADA'].isin(['Inscrito', 'Pendente', 'Concluinte'])
-    
-    # Adicionar período como coluna
-    df['PERIODO_REFERENCIA'] = periodo
-    
-    return df
-
-def gerar_dados_evasao(df, periodo):
-    """Gera dados para planilha de evasão"""
-    
-    if df is None or df.empty:
-        return None
-    
-    dados = []
-    
-    for curso in df['CURSO_CLASSIFICADO'].unique():
-        for modalidade in ['AMPLA CONCORRÊNCIA', 'AÇÕES AFIRMATIVAS']:
+    try:
+        # Encontrar colunas
+        colunas = {}
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if 'situação' in col_lower or 'situacao' in col_lower:
+                colunas['situacao'] = col
+            elif 'modalidade' in col_lower:
+                colunas['modalidade'] = col
+            elif 'desvinculado' in col_lower:
+                colunas['desvinculado'] = col
+            elif 'curso' in col_lower or 'titulação' in col_lower:
+                colunas['curso'] = col
+        
+        if 'situacao' not in colunas or 'modalidade' not in colunas:
+            return None, "Colunas obrigatórias não encontradas"
+        
+        # Limpar dados
+        df = df.dropna(subset=[colunas['modalidade']], how='all')
+        df = df[~df[colunas['situacao']].astype(str).str.contains('Alunos de|Total', na=False, case=False)]
+        
+        resultados['total_alunos'] = len(df)
+        
+        # Processar cada linha
+        for idx, row in df.iterrows():
+            situacao = str(row[colunas['situacao']]).lower()
+            modalidade = str(row[colunas['modalidade']]).upper()
+            curso = str(row.get(colunas.get('curso', ''), '')).lower() if 'curso' in colunas else 'bacharel química'
             
-            df_filtro = df[
-                (df['CURSO_CLASSIFICADO'] == curso) & 
-                (df['MODALIDADE_CLASSIFICADA'] == modalidade)
-            ]
+            # Classificar curso
+            if 'licenciatura' in curso:
+                curso_nome = 'Licenciatura Química'
+            elif 'bacharel' in curso:
+                if 'industrial' in curso:
+                    curso_nome = 'Bacharel Q Industrial'
+                else:
+                    curso_nome = 'Bacharel Química'
+            else:
+                curso_nome = 'Bacharel Química'  # padrão
             
-            if len(df_filtro) == 0:
-                continue
+            # Classificar modalidade
+            if modalidade.startswith('A'):
+                modalidade_nome = 'AMPLA CONCORRÊNCIA'
+            elif modalidade.startswith('L'):
+                modalidade_nome = 'AÇÕES AFIRMATIVAS'
+            else:
+                modalidade_nome = 'OUTROS'
             
-            # Cancelamentos do período
-            cancelamentos = df_filtro[
-                (df_filtro['E_CANCELADO']) & 
-                (df_filtro['PERIODO_DESVINCULACAO'] == periodo)
-            ]
+            # Contabilizar matrículas ativas (Pendente, Inscrito, Concluinte)
+            if any(x in situacao for x in ['pendente', 'inscrito', 'concluinte']):
+                resultados['ativos'] += 1
             
-            # Matrículas ativas
-            matriculas_ativas = df_filtro[
-                (df_filtro['E_ATIVO']) & 
-                (~df_filtro['E_CANCELADO']) & 
-                (~df_filtro['E_FORMADO'])
-            ]
+            # Contabilizar trancados
+            if 'trancado' in situacao:
+                resultados['trancados'] += 1
             
-            # Contagem por motivo
-            cancel_por_motivo = {}
-            for motivo in MOTIVOS_CANCELAMENTO.values():
-                count = len(cancelamentos[cancelamentos['MOTIVO_CANCELAMENTO'] == motivo])
-                cancel_por_motivo[motivo] = count
+            # Contabilizar formados
+            if 'formado' in situacao:
+                resultados['formados'] += 1
             
-            dados.append({
-                'Curso': curso,
-                'Modalidade': modalidade,
-                'Ingressantes': len(df_filtro),
-                'Solicitação Oficial': cancel_por_motivo['Solicitação Oficial'],
-                'Abandono': cancel_por_motivo['Abandono'],
-                'Insuf. Aproveitamento': cancel_por_motivo['Insuficiência de Aproveitamento'],
-                'Ingressante - Insuf.': cancel_por_motivo['Ingressante - Insuf. Aproveit.'],
-                'Mudança de Curso': cancel_por_motivo['Mudança de Curso'],
-                'Total Cancelamentos': len(cancelamentos),
-                'Matrículas Ativas': len(matriculas_ativas) + len(df_filtro[df_filtro['E_TRANCADO']]),
-                'Trancados': len(df_filtro[df_filtro['E_TRANCADO']]),
-                'Formados': len(df_filtro[df_filtro['E_FORMADO']])
-            })
-    
-    return pd.DataFrame(dados)
+            # Contabilizar cancelamentos
+            if 'cancelamento' in situacao:
+                resultados['cancelados'] += 1
+                
+                # Verificar se é do período atual
+                if 'desvinculado' in colunas and pd.notna(row[colunas['desvinculado']]):
+                    data = str(row[colunas['desvinculado']])
+                    if periodo.replace('.', '/') in data or periodo in data:
+                        resultados['cancelamentos_periodo'] += 1
+            
+            # Agrupar por curso e modalidade
+            chave = f"{curso_nome}|{modalidade_nome}"
+            if chave not in resultados['por_curso']:
+                resultados['por_curso'][chave] = {
+                    'curso': curso_nome,
+                    'modalidade': modalidade_nome,
+                    'ingressantes': 0,
+                    'cancelamentos': 0,
+                    'ativos': 0,
+                    'trancados': 0,
+                    'formados': 0
+                }
+            
+            resultados['por_curso'][chave]['ingressantes'] += 1
+            
+            if any(x in situacao for x in ['pendente', 'inscrito', 'concluinte']):
+                resultados['por_curso'][chave]['ativos'] += 1
+            
+            if 'trancado' in situacao:
+                resultados['por_curso'][chave]['trancados'] += 1
+            
+            if 'formado' in situacao:
+                resultados['por_curso'][chave]['formados'] += 1
+            
+            if 'cancelamento' in situacao:
+                resultados['por_curso'][chave]['cancelamentos'] += 1
+        
+        return resultados, None
+        
+    except Exception as e:
+        return None, str(e)
 
 def main():
-    """Função principal"""
-    
     # Header
     st.markdown("""
-    <div class="main-header">
-        <h1 style="color: white; margin: 0;">🧪 Processador de Relatórios SISU</h1>
-        <p style="color: white; margin: 0; opacity: 0.9;">Instituto de Química - Universidade Federal Fluminense</p>
+    <div class="main-title">
+        <h1 style="color: white; margin:0;">🧪 Processador de Relatórios SISU</h1>
+        <p style="color: white; margin:0; opacity:0.9;">Instituto de Química - UFF</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -257,23 +167,19 @@ def main():
         st.markdown("### 📁 Upload do Relatório")
         
         uploaded_file = st.file_uploader(
-            "Carregar arquivo de alunos",
+            "Carregar arquivo Excel",
             type=['xlsx', 'xls'],
-            help="Arquivo Excel com a listagem de alunos"
+            help="Arquivo com a listagem de alunos"
         )
         
-        # Período de referência
-        ano_atual = datetime.now().year
-        semestre_atual = 1 if datetime.now().month <= 6 else 2
-        
+        # Período
         periodo = st.text_input(
-            "Período de referência",
-            value=f"{ano_atual}.{semestre_atual}",
-            help="Formato: AAAA.S (ex: 2025.1)"
+            "Período (ex: 2025.1)",
+            value="2025.1"
         )
         
         processar = st.button(
-            "🚀 Processar Relatório",
+            "🚀 Processar",
             type="primary",
             use_container_width=True,
             disabled=uploaded_file is None
@@ -282,115 +188,153 @@ def main():
         st.markdown("---")
         st.markdown("""
         ### 📌 Instruções
-        1. Faça upload do relatório
-        2. Confirme o período
-        3. Clique em Processar
-        4. Copie os dados gerados
+        1. Upload do relatório
+        2. Confirmar período
+        3. Processar
+        4. Copiar dados
         """)
     
     # Área principal
     if uploaded_file and processar:
-        try:
-            with st.spinner("🔄 Processando relatório..."):
-                # Ler arquivo
-                df = pd.read_excel(uploaded_file, header=5)
+        with st.spinner("🔄 Processando..."):
+            try:
+                # Tentar diferentes headers
+                df = None
+                for header in [5, 4, 6, 0]:
+                    try:
+                        df = pd.read_excel(uploaded_file, header=header)
+                        if len(df.columns) > 3:
+                            break
+                    except:
+                        continue
+                
+                if df is None:
+                    st.error("❌ Não foi possível ler o arquivo. Verifique o formato.")
+                    return
                 
                 # Processar
-                df_processado = processar_relatorio(df, periodo)
+                resultados, erro = processar_arquivo(df, periodo)
                 
-                if df_processado is not None:
-                    st.success("✅ Relatório processado com sucesso!")
-                    
-                    # Métricas
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    
-                    with col1:
-                        st.metric("Total de Alunos", len(df_processado))
-                    with col2:
-                        st.metric("Matrículas Ativas", df_processado['E_ATIVO'].sum())
-                    with col3:
-                        st.metric("Cancelamentos", df_processado['E_CANCELADO'].sum())
-                    with col4:
-                        st.metric("Trancados", df_processado['E_TRANCADO'].sum())
-                    with col5:
-                        st.metric("Formados", df_processado['E_FORMADO'].sum())
-                    
-                    # Resumo por curso
-                    st.markdown("### 📊 Resumo por Curso")
-                    
-                    resumo = df_processado.groupby(['CURSO_CLASSIFICADO', 'MODALIDADE_CLASSIFICADA']).size().reset_index(name='Quantidade')
-                    st.dataframe(resumo, use_container_width=True)
-                    
-                    # Dados para evasão
-                    st.markdown("### 📋 Dados para Planilha de Evasão")
-                    
-                    dados_evasao = gerar_dados_evasao(df_processado, periodo)
-                    
-                    if dados_evasao is not None and not dados_evasao.empty:
-                        st.dataframe(dados_evasao, use_container_width=True)
-                        
-                        # Consolidado
-                        st.markdown("### 🎯 Consolidado")
-                        
-                        consolidado = pd.DataFrame([{
-                            'Período': periodo,
-                            'Total Ingressantes': dados_evasao['Ingressantes'].sum(),
-                            'Total Cancelamentos': dados_evasao['Total Cancelamentos'].sum(),
-                            'Total Matrículas Ativas': dados_evasao['Matrículas Ativas'].sum(),
-                            'Total Formados': dados_evasao['Formados'].sum(),
-                            '% Evasão': round(
-                                (dados_evasao['Total Cancelamentos'].sum() / dados_evasao['Ingressantes'].sum() * 100)
-                                if dados_evasao['Ingressantes'].sum() > 0 else 0, 2
-                            )
-                        }])
-                        
-                        st.dataframe(consolidado, use_container_width=True, hide_index=True)
-                        
-                        # Instruções
-                        st.markdown(f"""
-                        <div class="info-box">
-                            <h4 style="margin-top: 0;">📌 Como atualizar a planilha principal</h4>
-                            <p><strong>Período: {periodo}</strong></p>
-                            <ol>
-                                <li>Abra a planilha "Cópia de Evasão Cursos de Química IQ_SISU_versão2025_.xlsx"</li>
-                                <li>Vá para a aba "Acumulado de 2025.1 a 2015.1"</li>
-                                <li>Localize a coluna do período <strong>{periodo}</strong></li>
-                                <li>Copie os valores:</li>
-                                <ul>
-                                    <li><strong>Ingressantes:</strong> {consolidado['Total Ingressantes'].values[0]}</li>
-                                    <li><strong>Cancelamentos:</strong> {consolidado['Total Cancelamentos'].values[0]}</li>
-                                    <li><strong>Matrículas Ativas:</strong> {consolidado['Total Matrículas Ativas'].values[0]}</li>
-                                    <li><strong>Formados:</strong> {consolidado['Total Formados'].values[0]}</li>
-                                    <li><strong>% Evasão:</strong> {consolidado['% Evasão'].values[0]}%</li>
-                                </ul>
-                            </ol>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Botão download
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            dados_evasao.to_excel(writer, sheet_name='Dados_Evasao', index=False)
-                            consolidado.to_excel(writer, sheet_name=f'Resumo_{periodo}', index=False)
-                        
-                        st.download_button(
-                            label="⬇️ Download Planilha Processada",
-                            data=output.getvalue(),
-                            file_name=f"dados_evasao_{periodo.replace('.', '_')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                    else:
-                        st.warning("⚠️ Nenhum dado de evasão encontrado para o período especificado.")
+                if erro:
+                    st.error(f"❌ Erro: {erro}")
+                    return
                 
-        except Exception as e:
-            st.error(f"❌ Erro ao processar arquivo: {str(e)}")
-            st.info("""
-            **Dicas:**
-            - Verifique se o arquivo está no formato correto
-            - Confirme se o cabeçalho está na linha 6
-            - As colunas de Situação e Modalidade são obrigatórias
-            """)
+                # MÉTRICAS PRINCIPAIS
+                st.success("✅ Processamento concluído!")
+                
+                col1, col2, col3, col4, col5 = st.columns(5)
+                with col1:
+                    st.metric("Total Alunos", resultados['total_alunos'])
+                with col2:
+                    st.metric("Matrículas Ativas", resultados['ativos'])
+                with col3:
+                    st.metric("Cancelamentos", resultados['cancelados'])
+                with col4:
+                    st.metric("Cancelamentos Período", resultados['cancelamentos_periodo'])
+                with col5:
+                    st.metric("Formados", resultados['formados'])
+                
+                # TABELA POR CURSO
+                st.markdown("### 📊 Dados por Curso e Modalidade")
+                
+                dados_tabela = []
+                for chave, dados in resultados['por_curso'].items():
+                    dados_tabela.append({
+                        'Curso': dados['curso'],
+                        'Modalidade': dados['modalidade'],
+                        'Ingressantes': dados['ingressantes'],
+                        'Ativos': dados['ativos'],
+                        'Trancados': dados['trancados'],
+                        'Cancelados': dados['cancelamentos'],
+                        'Formados': dados['formados']
+                    })
+                
+                df_tabela = pd.DataFrame(dados_tabela)
+                st.dataframe(df_tabela, use_container_width=True)
+                
+                # DADOS PARA PLANILHA DE EVASÃO
+                st.markdown("### 📋 Dados para Planilha de Evasão")
+                
+                # Consolidado
+                total_ingressantes = df_tabela['Ingressantes'].sum()
+                total_cancelamentos = resultados['cancelamentos_periodo']
+                total_ativos = df_tabela['Ativos'].sum() + df_tabela['Trancados'].sum()
+                total_formados = df_tabela['Formados'].sum()
+                taxa_evasao = (total_cancelamentos / total_ingressantes * 100) if total_ingressantes > 0 else 0
+                
+                consolidado = pd.DataFrame([{
+                    'Período': periodo,
+                    'Ingressantes': total_ingressantes,
+                    'Cancelamentos': total_cancelamentos,
+                    'Matrículas Ativas': total_ativos,
+                    'Formados': total_formados,
+                    '% Evasão': round(taxa_evasao, 2)
+                }])
+                
+                st.dataframe(consolidado, use_container_width=True, hide_index=True)
+                
+                # INSTRUÇÕES
+                st.markdown(f"""
+                <div class="success-box">
+                    <h4 style="margin-top:0;">📌 Como atualizar a planilha principal</h4>
+                    <p><strong>Período: {periodo}</strong></p>
+                    <table style="width:100%; border-collapse: collapse;">
+                        <tr style="background-color: #28a745; color: white;">
+                            <th style="padding: 8px; text-align: left;">Campo</th>
+                            <th style="padding: 8px; text-align: left;">Valor</th>
+                            <th style="padding: 8px; text-align: left;">Local na Planilha</th>
+                        </tr>
+                        <tr style="background-color: white;">
+                            <td style="padding: 8px; border: 1px solid #ddd;"><strong>Ingressantes</strong></td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">{total_ingressantes}</td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">Linha "Total de Ingressantes"</td>
+                        </tr>
+                        <tr style="background-color: #f9f9f9;">
+                            <td style="padding: 8px; border: 1px solid #ddd;"><strong>Cancelamentos</strong></td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">{total_cancelamentos}</td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">Linha "TOTAL CANCELAMENTOS"</td>
+                        </tr>
+                        <tr style="background-color: white;">
+                            <td style="padding: 8px; border: 1px solid #ddd;"><strong>Matrículas Ativas</strong></td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">{total_ativos}</td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">Linha "TOTAL MATRIC. ATIVAS"</td>
+                        </tr>
+                        <tr style="background-color: #f9f9f9;">
+                            <td style="padding: 8px; border: 1px solid #ddd;"><strong>Formados</strong></td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">{total_formados}</td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">Linha "Alunos Formados"</td>
+                        </tr>
+                        <tr style="background-color: white;">
+                            <td style="padding: 8px; border: 1px solid #ddd;"><strong>% Evasão</strong></td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">{round(taxa_evasao, 2)}%</td>
+                            <td style="padding: 8px; border: 1px solid #ddd;">Linha "% Cancelamento"</td>
+                        </tr>
+                    </table>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Download
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_tabela.to_excel(writer, sheet_name='Detalhado', index=False)
+                    consolidado.to_excel(writer, sheet_name=f'Resumo_{periodo}', index=False)
+                
+                st.download_button(
+                    label="⬇️ Download Planilha",
+                    data=output.getvalue(),
+                    file_name=f"dados_evasao_{periodo.replace('.', '_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                
+            except Exception as e:
+                st.error(f"❌ Erro: {str(e)}")
+                st.info("""
+                **Dicas:**
+                - Verifique se o arquivo está no formato correto
+                - As colunas de Situação e Modalidade são obrigatórias
+                - Tente usar um arquivo com menos linhas
+                """)
 
 if __name__ == "__main__":
     main()
